@@ -1,8 +1,8 @@
 <script>
-	import LyricsPlayer from '$lib/LyricsPlayer.svelte';
-import MusicPlayer from '$lib/MusicPlayer.svelte';
-	import MusicWave from '$lib/MusicWave.svelte';
-	import RhythmPlayer from '$lib/RhythmPlayer.svelte';
+    import LyricsPlayer from '$lib/LyricsPlayer.svelte';
+    import MusicPlayer from '$lib/MusicPlayer.svelte';
+    import MusicWave from '$lib/MusicWave.svelte';
+    import RhythmPlayer from '$lib/RhythmPlayer.svelte';
 </script>
 
 <h1>Welcome to SvelteKit</h1>
@@ -17,3 +17,13 @@ import MusicPlayer from '$lib/MusicPlayer.svelte';
 <RhythmPlayer />
 <hr>
 <LyricsPlayer />
+
+<style>
+    :global(body) {
+        background-color: hsl(90, 24%, 92%); /* 修改背景颜色 */
+        color: #7b1313;
+        font-family: Arial, sans-serif;
+        margin: 0;
+        padding: 0;
+    }
+</style>

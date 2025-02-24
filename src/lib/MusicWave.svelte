@@ -1,21 +1,19 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { Howl, Howler } from 'howler';
   import * as d3 from 'd3';
 
-  let svg: SVGSVGElement; // reference to the SVG element
+  let svg: SVGSVGElement;
   const width = 800;
   const height = 400;
   let animationId: number;
 
   let musicPlaying = false;
-  let musicHowl: Howl;
+  let audioElement: HTMLAudioElement;
   let analyser: AnalyserNode, dataArray: Uint8Array, bufferLength: number;
   let startTime: number | null = null;
   let audioContext: AudioContext;
-  const amplitudeFactor = 10; // 控制波形幅度的因子
+  const amplitudeFactor = 10;
 
-  // Generates sine wave data modulated by the audio amplitude.
   function createSineData(offset: number, amplitude: number) {
     const data = [];
     for (let x = 0; x <= width; x += 5) {
@@ -25,12 +23,10 @@
     return data;
   }
 
-  // Continuously updates the sine curve based on audio frequency data.
   function updateSine() {
     if (!musicPlaying) return;
     analyser.getByteFrequencyData(dataArray);
     const avg = d3.mean(dataArray);
-    // Map the average frequency (0–255) to an amplitude (0–100)
     const amplitude = avg * (100 / 255) * amplitudeFactor;
     const currentTime = (Date.now() - (startTime ?? 0)) / 1000;
     const data = createSineData(currentTime, amplitude);
@@ -40,26 +36,30 @@
     animationId = requestAnimationFrame(updateSine);
   }
 
-  // Toggles music playback and starts or stops the visualization.
   function toggleMusic() {
     if (!musicPlaying) {
       startTime = Date.now();
-      musicHowl.play();
-      // Delay to allow the audio node to initialize.
-      setTimeout(() => {
-        const sound = (musicHowl as any)._sounds[0]._node;
-        sound.disconnect();
+      
+      // 创建新的AudioContext
+      if (!audioContext) {
+        audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const source = audioContext.createMediaElementSource(audioElement);
         analyser = audioContext.createAnalyser();
         analyser.fftSize = 2048;
         bufferLength = analyser.frequencyBinCount;
         dataArray = new Uint8Array(bufferLength);
-        sound.connect(analyser);
+        
+        // 连接音频节点
+        source.connect(analyser);
         analyser.connect(audioContext.destination);
-        musicPlaying = true;
-        updateSine();
-      }, 200);
+      }
+
+      audioElement.play();
+      musicPlaying = true;
+      updateSine();
     } else {
-      musicHowl.stop();
+      audioElement.pause();
+      audioElement.currentTime = 0;
       cancelAnimationFrame(animationId);
       musicPlaying = false;
       d3.select(svg).select('path').attr('d', null);
@@ -67,7 +67,7 @@
   }
 
   onMount(() => {
-    // Initialize SVG container with D3.
+    // 初始化SVG
     const svgContainer = d3.select(svg)
       .attr('width', width)
       .attr('height', height);
@@ -76,20 +76,19 @@
       .attr('stroke-width', 3)
       .attr('fill', 'none');
 
-    // Create the Howl instance for the background music.
-    musicHowl = new Howl({
-      src: ['/audio/bass.mp3'], // Ensure the audio file is placed in static/audio/music.mp3
-      loop: true
-    });
-
-    // Use Howler's AudioContext
-    audioContext = Howler.ctx;
+    // 创建音频元素
+    audioElement = new Audio('/audio/bass.mp3');
+    audioElement.loop = true;
   });
 
   onDestroy(() => {
     if (musicPlaying) {
-      musicHowl.stop();
+      audioElement.pause();
+      audioElement.src = '';
       cancelAnimationFrame(animationId);
+    }
+    if (audioContext) {
+      audioContext.close();
     }
   });
 </script>

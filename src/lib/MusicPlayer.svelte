@@ -1,8 +1,6 @@
 <script lang="ts">
     import { onMount, onDestroy } from 'svelte';
-    import { Howl } from 'howler';
   
-    // 音频文件路径（请确保这些文件已经放在 public/audio 目录下）
     const instrumentFiles = {
       bass: '/audio/bass.mp3',
       hihat: '/audio/hihat.mp3',
@@ -17,50 +15,51 @@
     let animationFrameId: number;
     let rafId: number;
   
-    // 定义各个乐器的状态和 Howl 实例，默认均启用
+    // 使用 Audio 元素替代 Howler
     let instruments: {
-      bass: { howl: Howl | null, enabled: boolean },
-      hihat: { howl: Howl | null, enabled: boolean },
-      kick: { howl: Howl | null, enabled: boolean },
-      snare: { howl: Howl | null, enabled: boolean }
+      bass: { audio: HTMLAudioElement | null, enabled: boolean },
+      hihat: { audio: HTMLAudioElement | null, enabled: boolean },
+      kick: { audio: HTMLAudioElement | null, enabled: boolean },
+      snare: { audio: HTMLAudioElement | null, enabled: boolean }
     } = {
-      bass: { howl: null, enabled: true },
-      hihat: { howl: null, enabled: true },
-      kick: { howl: null, enabled: true },
-      snare: { howl: null, enabled: true }
+      bass: { audio: null, enabled: true },
+      hihat: { audio: null, enabled: true },
+      kick: { audio: null, enabled: true },
+      snare: { audio: null, enabled: true }
     };
   
     function initInstruments() {
       for (const instrument of Object.keys(instrumentFiles) as (keyof typeof instrumentFiles)[]) {
-        instruments[instrument].howl = new Howl({
-          src: [instrumentFiles[instrument]],
-          loop: true,
-          volume: instruments[instrument].enabled ? 1 : 0
-        });
+        const audio = new Audio(instrumentFiles[instrument]);
+        audio.loop = true;
+        instruments[instrument].audio = audio;
       }
     }
   
     function toggleInstrument(instrument: keyof typeof instruments) {
       instruments[instrument].enabled = !instruments[instrument].enabled;
-      if (instruments[instrument].howl) {
-        instruments[instrument].howl.volume(instruments[instrument].enabled ? 1 : 0);
+      if (instruments[instrument].audio) {
+        instruments[instrument].audio.volume = instruments[instrument].enabled ? 1 : 0;
       }
     }
   
     function play() {
       if (!isPlaying) {
+        // 播放所有启用的音轨
         for (const key of Object.keys(instruments) as (keyof typeof instruments)[]) {
-          if (instruments[key].howl) {
-            (instruments[key].howl as any).play();
+          if (instruments[key].audio && instruments[key].enabled) {
+            instruments[key].audio.play();
           }
         }
         isPlaying = true;
         startTime = Date.now();
         updateProgress();
       } else {
+        // 停止所有音轨
         for (const key of Object.keys(instruments) as (keyof typeof instruments)[]) {
-          if (instruments[key].howl) {
-            (instruments[key].howl as any).stop();
+          if (instruments[key].audio) {
+            instruments[key].audio.pause();
+            instruments[key].audio.currentTime = 0;
           }
         }
         isPlaying = false;
@@ -81,31 +80,28 @@
     onMount(() => {
       initInstruments();
       function animate() {
-        // ...你的动画更新逻辑...
         rafId = requestAnimationFrame(animate);
       }
       animate();
-
-      return () => {
-        if (typeof cancelAnimationFrame === 'function') {
-          cancelAnimationFrame(rafId);
-        }
-      };
     });
   
     onDestroy(() => {
       if (typeof cancelAnimationFrame === 'function') {
         cancelAnimationFrame(animationFrameId);
+        cancelAnimationFrame(rafId);
       }
+      // 清理音频资源
       for (const key of Object.keys(instruments) as Array<keyof typeof instruments>) {
-        if (instruments[key].howl) {
-          instruments[key].howl.unload();
+        if (instruments[key].audio) {
+          instruments[key].audio.pause();
+          instruments[key].audio.src = '';
+          instruments[key].audio = null;
         }
       }
     });
-  </script>
-  
-  <style>
+</script>
+
+<style>
     .controls {
       display: flex;
       flex-direction: column;
@@ -128,9 +124,9 @@
       background-color: #4caf50;
       transition: width 0.1s linear;
     }
-  </style>
+</style>
   
-  <div class="controls">
+<div class="controls">
     <div class="buttons">
       <button on:click="{play}">{isPlaying ? '暂停' : '播放'}</button>
       <button on:click="{() => toggleInstrument('bass')}">
@@ -149,4 +145,4 @@
     <div class="progress">
       <div class="progress-bar" style="width: {progress}%;"></div>
     </div>
-  </div>
+</div>

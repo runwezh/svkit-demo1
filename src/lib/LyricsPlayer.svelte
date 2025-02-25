@@ -1,15 +1,18 @@
 <script lang="ts">
     import { onMount, onDestroy } from 'svelte';
-    import WaveSurfer from 'wavesurfer.js';
+    import { Howl } from 'howler';
     
     export let audioSrc = './audio/leaving_the_club_edited.mp3';
-    export let subtitleContent ='[00:00.00]As I\'m leaving the club, I\'m here in the vibration of the kick drum.[00:04.00]It was the most life - changing moment I ever had...[00:07.20]Like, did I hear that?[00:08.64]It sounded like the kick drum was played by a drunk three - year - old.[00:13.00]And I was like, are you allowed to do that?'; // the raw subtitle text
-    export let subtitleFormat = 'lrc'; // default format
+    export let subtitleContent = '[00:00.00]As I\'m leaving the club, I\'m here in the vibration of the kick drum.[00:04.00]It was the most life - changing moment I ever had...[00:07.20]Like, did I hear that?[00:08.64]It sounded like the kick drum was played by a drunk three - year - old.[00:13.00]And I was like, are you allowed to do that?';
+    export let subtitleFormat = 'lrc';
 
-    let wavesurfer: WaveSurfer;
+    let audioHowl: Howl;
     let currentTime = 0;
     let audioPlaying = false;
     let subtitles: { start: number, end: number, text: string }[] = [];
+    let animationId: number;
+    let waveformCanvas: HTMLCanvasElement;
+    let startTime: number | null = null;
 
     // --- Subtitle Parsing Functions ---
 
@@ -192,21 +195,101 @@
         return 0;
     }
 
-    // Update current subtitle highlighting based on playback time.
+    // 更新歌词高亮
     function updateHighlight() {
-        currentTime = wavesurfer.getCurrentTime();
+        if (!audioPlaying) return;
+        
+        currentTime = audioHowl.seek() || 0;
+        
+        // 绘制波形
+        drawWaveform(currentTime);
+        
+        animationId = requestAnimationFrame(updateHighlight);
+    }
+    
+    // 绘制波形
+    function drawWaveform(currentTime: number) {
+        const ctx = waveformCanvas.getContext('2d');
+        if (!ctx) return;
+        
+        const width = waveformCanvas.width;
+        const height = waveformCanvas.height;
+        
+        ctx.clearRect(0, 0, width, height);
+        
+        // 绘制背景
+        ctx.fillStyle = '#f5f5f5';
+        ctx.fillRect(0, 0, width, height);
+        
+        const duration = audioHowl.duration() || 1;
+        const progress = (currentTime / duration) * width;
+        
+        // 波形依赖于歌词的时间点
+        ctx.beginPath();
+        ctx.moveTo(0, height / 2);
+        
+        const timeOffset = (Date.now() - (startTime || 0)) / 1000;
+        
+        // 绘制波形
+        for (let x = 0; x < width; x++) {
+            const xRatio = x / width * duration;
+            let y = height / 2;
+            
+            // 在歌词时间点附近创造波动
+            for (const line of subtitles) {
+                const startPos = (line.start / duration) * width;
+                const endPos = (line.end / duration) * width;
+                
+                if (x >= startPos && x <= endPos) {
+                    // 当前歌词行活跃时波形振幅较大
+                    const lineProgress = (x - startPos) / (endPos - startPos);
+                    y += Math.sin(lineProgress * Math.PI * 2 + timeOffset * 3) * 10;
+                } else if (Math.abs(x - startPos) < 20) {
+                    // 歌词开始附近有波峰
+                    const impact = (20 - Math.abs(x - startPos)) / 20;
+                    y += Math.sin(impact * Math.PI + timeOffset) * 15 * impact;
+                }
+            }
+            
+            // 添加随时间变化的小波动
+            y += Math.sin(x * 0.1 + timeOffset) * 3;
+            
+            ctx.lineTo(x, y);
+        }
+        
+        // 绘制波形线
+        ctx.strokeStyle = '#4a9eff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        
+        // 绘制已播放部分
+        ctx.beginPath();
+        ctx.rect(0, 0, progress, height);
+        ctx.fillStyle = 'rgba(30, 107, 199, 0.2)';
+        ctx.fill();
+        
+        // 绘制播放位置线
+        ctx.beginPath();
+        ctx.moveTo(progress, 0);
+        ctx.lineTo(progress, height);
+        ctx.strokeStyle = '#1e6bc7';
+        ctx.lineWidth = 2;
+        ctx.stroke();
     }
 
-    // Toggle audio playback.
+    // 切换音频播放
     function togglePlayback() {
         if (!audioPlaying) {
-            wavesurfer.play();
+            startTime = Date.now();
+            audioHowl.play();
             audioPlaying = true;
+            updateHighlight();
         } else {
-            wavesurfer.pause();
-            wavesurfer.seekTo(0);
-            wavesurfer.stop();
+            audioHowl.stop();
             audioPlaying = false;
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+            }
         }
     }
 
@@ -214,45 +297,33 @@
     onMount(() => {
         subtitles = parseSubtitles(subtitleContent, subtitleFormat);
 
-        wavesurfer = WaveSurfer.create({
-            container: '#waveform',
-            waveColor: '#4a9eff',
-            progressColor: '#1e6bc7',
-            height: 50,
-            cursorWidth: 1,
-            cursorColor: '#333',
-            normalize: true,
-        } as any); // 添加类型断言
-
-        // 添加音频结束事件监听器，实现循环播放
-        wavesurfer.on('finish', () => {
-            if (audioPlaying) {
-                wavesurfer.play();
+        // 创建Howl实例
+        audioHowl = new Howl({
+            src: [audioSrc],
+            loop: true,
+            html5: true,
+            onload: function() {
+                // 设置最后一句歌词的结束时间为音频的总时长
+                if (subtitles.length > 0) {
+                    subtitles[subtitles.length - 1].end = audioHowl.duration();
+                }
             }
         });
-
-        wavesurfer.on('ready', () => {
-            // 设置最后一句歌词的结束时间为音频的总时长
-            if (subtitles.length > 0) {
-                subtitles[subtitles.length - 1].end = wavesurfer.getDuration();
-            }
-        });
-
-        wavesurfer.load(audioSrc);
-        
-        wavesurfer.on('audioprocess', updateHighlight);
-        wavesurfer.on('seek', updateHighlight);
     });
 
     onDestroy(() => {
-        if (wavesurfer) {
-            wavesurfer.destroy();
+        if (audioHowl) {
+            audioHowl.stop();
+            audioHowl.unload();
+        }
+        if (animationId) {
+            cancelAnimationFrame(animationId);
         }
     });
 </script>
 
 <div class="lyrics-container">
-    <div id="waveform"></div>
+    <canvas bind:this={waveformCanvas} class="waveform" width="800" height="50"></canvas>
     {#each subtitles as line (line.start)}
         <div class="line { (currentTime>0) && currentTime >= line.start && currentTime < line.end ? 'active' : ''}">
             {#each line.text.split('') as char, i}
@@ -293,6 +364,12 @@
     }
     .highlight {
         color: red; /* 已播放的文字段字体颜色为红色 */
+    }
+    .waveform {
+        width: 100%;
+        height: 50px;
+        border: 1px solid #ddd;
+        margin-bottom: 10px;
     }
     .controls {
         text-align: center;

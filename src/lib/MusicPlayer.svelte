@@ -1,6 +1,6 @@
 <script lang="ts">
     import { onMount, onDestroy } from 'svelte';
-    import WaveSurfer from 'wavesurfer.js';
+    import { Howl } from 'howler';
 
     const instrumentFiles = {
         bass: './audio/bass.mp3',
@@ -12,99 +12,152 @@
     let isPlaying = false;
     let progress = 0;
     
-    // WaveSurfer实例
+    // 使用Howl替代WaveSurfer实例
     let instruments: {
         [key: string]: {
-            wavesurfer: WaveSurfer | null;
+            howl: Howl | null;
             enabled: boolean;
         };
     } = {
-        bass: { wavesurfer: null, enabled: true },
-        hihat: { wavesurfer: null, enabled: true },
-        kick: { wavesurfer: null, enabled: true },
-        snare: { wavesurfer: null, enabled: true }
+        bass: { howl: null, enabled: true },
+        hihat: { howl: null, enabled: true },
+        kick: { howl: null, enabled: true },
+        snare: { howl: null, enabled: true }
     };
+
+    // 用于绘制波形的Canvas元素
+    let canvasRefs: {[key: string]: HTMLCanvasElement | null} = {
+        bass: null,
+        hihat: null,
+        kick: null,
+        snare: null
+    };
+
+    let animationFrameId: number;
+    let startTime = Date.now();
 
     function initInstruments() {
         for (const [name, file] of Object.entries(instrumentFiles)) {
-            instruments[name].wavesurfer = WaveSurfer.create({
-                container: `#waveform-${name}`,
-                waveColor: '#4a9eff',
-                progressColor: '#1e6bc7',
-                height: 50,
-                cursorWidth: 1,
-                cursorColor: '#333',
-                normalize: true,
-            } as any); // 使用类型断言避免TypeScript错误
-            
-            instruments[name].wavesurfer.load(file);
-            
-            // 添加事件监听器，当track播放结束时立即重新播放以实现循环效果
-            instruments[name].wavesurfer.on('finish', () => {
-                if (isPlaying && instruments[name].enabled) {
-                    instruments[name].wavesurfer?.play();
-                }
-            });
-            
-            // 添加ready事件监听器，当所有音频加载完成后自动播放
-            instruments[name].wavesurfer.on('ready', () => {
-                // 检查是否所有track都加载完成
-                let allReady = true;
-                for (const key of Object.keys(instruments)) {
-                    if (!instruments[key].wavesurfer?.isReady) {
-                        allReady = false;
-                        break;
+            instruments[name].howl = new Howl({
+                src: [file],
+                loop: true,
+                autoplay: false,
+                html5: true,
+                volume: instruments[name].enabled ? 1 : 0,
+                onend: function() {
+                    if (isPlaying && instruments[name].enabled) {
+                        instruments[name].howl?.play();
                     }
-                }
-                
-                // 如果所有track都准备好了，自动开始播放
-                if (allReady && !isPlaying) {
-                    isPlaying = true;
-                    for (const key of Object.keys(instruments)) {
-                        if (instruments[key].enabled) {
-                            instruments[key].wavesurfer?.play();
-                        }
-                    }
-                } else if (isPlaying && instruments[name].enabled) {
-                    instruments[name].wavesurfer?.play();
                 }
             });
 
-            // 添加audioprocess事件监听器，更新播放进度
-            instruments[name].wavesurfer.on('audioprocess', updateProgress);
-            instruments[name].wavesurfer.on('seek', updateProgress);
+            // 初始化波形显示的Canvas
+            if (canvasRefs[name]) {
+                const ctx = canvasRefs[name]?.getContext('2d');
+                if (ctx) {
+                    ctx.fillStyle = '#4a9eff';
+                    drawWaveform(ctx, name);
+                }
+            }
         }
     }
 
     function toggleInstrument(name: string) {
         instruments[name].enabled = !instruments[name].enabled;
-        if (instruments[name].wavesurfer) {
-            if (!instruments[name].enabled) {
-                instruments[name].wavesurfer.setVolume(0);
-            } else {
-                instruments[name].wavesurfer.setVolume(1);
-            }
+        if (instruments[name].howl) {
+            instruments[name].howl.volume(instruments[name].enabled ? 1 : 0);
         }
     }
 
     function play() {
         isPlaying = !isPlaying;
         for (const name of Object.keys(instruments)) {
-            if (instruments[name].wavesurfer && instruments[name].enabled) {
+            if (instruments[name].howl && instruments[name].enabled) {
                 if (isPlaying) {
-                    instruments[name].wavesurfer.play();
+                    instruments[name].howl.play();
                 } else {
-                    instruments[name].wavesurfer.pause();
-                    instruments[name].wavesurfer.seekTo(0);
+                    instruments[name].howl.stop();
                 }
             }
+        }
+        
+        if (isPlaying) {
+            startTime = Date.now();
+            updateProgress();
+        } else {
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+            }
+            progress = 0;
         }
     }
 
     function updateProgress() {
-        const totalDuration = Math.max(...Object.values(instruments).map(inst => inst.wavesurfer?.getDuration() || 0));
-        const currentTime = Math.max(...Object.values(instruments).map(inst => inst.wavesurfer?.getCurrentTime() || 0));
-        progress = (currentTime / totalDuration) * 100;
+        if (!isPlaying) return;
+        
+        // 使用第一个音频的seek作为进度参考
+        const key = Object.keys(instruments)[0];
+        if (instruments[key]?.howl) {
+            const duration = instruments[key].howl.duration();
+            const seek = instruments[key].howl.seek() || 0;
+            progress = (seek / duration) * 100;
+        }
+        
+        // 画波形动画
+        for (const name of Object.keys(instruments)) {
+            const ctx = canvasRefs[name]?.getContext('2d');
+            if (ctx) {
+                drawWaveform(ctx, name);
+            }
+        }
+        
+        animationFrameId = requestAnimationFrame(updateProgress);
+    }
+    
+    // 绘制简单的波形，使用时间和随机值模拟音频波形
+    function drawWaveform(ctx: CanvasRenderingContext2D, name: string) {
+        const canvas = ctx.canvas;
+        const width = canvas.width;
+        const height = canvas.height;
+        
+        ctx.clearRect(0, 0, width, height);
+        
+        if (!instruments[name].enabled) {
+            // 如果该轨道被禁用，绘制一个灰色平线
+            ctx.fillStyle = '#ccc';
+            ctx.fillRect(0, height/2 - 1, width, 2);
+            return;
+        }
+        
+        ctx.fillStyle = '#4a9eff';
+        
+        // 使用Howl的seek值来确定进度位置
+        const seek = instruments[name].howl?.seek() || 0;
+        const timeOffset = (Date.now() - startTime) / 1000;
+        
+        // 绘制波形
+        const segmentWidth = 5;
+        for (let x = 0; x < width; x += segmentWidth) {
+            // 使用伪随机函数生成波形高度
+            const seed = (x + timeOffset * 50) / 100;
+            const y = Math.sin(seed) * 10 + Math.sin(seed * 0.5) * 5;
+            const amplitude = instruments[name].howl?.playing() ? 
+                              Math.abs(y) * (instruments[name].howl?.volume() || 1) * 15 : 
+                              5;
+            
+            // 高度限制在canvas高度范围内
+            const barHeight = Math.min(amplitude, height / 2 - 5);
+            
+            // 从中间向上下绘制
+            ctx.fillRect(x, height/2 - barHeight/2, segmentWidth - 1, barHeight);
+            
+            // 如果超过当前seek位置，减弱颜色
+            if (x / width > progress / 100) {
+                ctx.fillStyle = '#ccc';
+            } else {
+                ctx.fillStyle = '#1e6bc7';
+            }
+        }
     }
 
     onMount(() => {
@@ -112,9 +165,13 @@
     });
 
     onDestroy(() => {
+        if (animationFrameId) {
+            cancelAnimationFrame(animationFrameId);
+        }
         for (const name of Object.keys(instruments)) {
-            if (instruments[name].wavesurfer) {
-                instruments[name].wavesurfer.destroy();
+            if (instruments[name].howl) {
+                instruments[name].howl.stop();
+                instruments[name].howl.unload();
             }
         }
     });
@@ -127,11 +184,17 @@
             <button on:click={() => toggleInstrument(name)}>
                 {instruments[name].enabled ? `禁用 ${name}` : `启用 ${name}`}
             </button>
-            <div id="waveform-{name}"></div>
+            <div id="waveform-{name}" class="waveform-container">
+                <canvas 
+                    bind:this={canvasRefs[name]} 
+                    width="300" 
+                    height="50"
+                ></canvas>
+            </div>
         {/each}
     </div>
     <div class="progress">
-        <div class="progress-bar" style="width: {progress}%"></div>
+        <div class="progress-bar" style="width: {progress}%;"></div>
     </div>
 </div>
 
@@ -157,5 +220,10 @@
         height: 100%;
         background-color: #4caf50;
         transition: width 0.1s linear;
+    }
+    .waveform-container {
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        margin: 5px 0;
     }
 </style>

@@ -1,18 +1,52 @@
 <script lang="ts">
     import { onMount, onDestroy } from 'svelte';
-    import { Howl } from 'howler';
+    import * as Tone from 'tone';
     
     export let audioSrc = './audio/leaving_the_club_edited.mp3';
     export let subtitleContent = '[00:00.00]As I\'m leaving the club, I\'m here in the vibration of the kick drum.[00:04.00]It was the most life - changing moment I ever had...[00:07.20]Like, did I hear that?[00:08.64]It sounded like the kick drum was played by a drunk three - year - old.[00:13.00]And I was like, are you allowed to do that?';
     export let subtitleFormat = 'lrc';
 
-    let audioHowl: Howl;
+    let audioPlayer: Tone.Player;
     let currentTime = 0;
     let audioPlaying = false;
     let subtitles: { start: number, end: number, text: string }[] = [];
     let animationId: number;
     let waveformCanvas: HTMLCanvasElement;
-    let startTime: number | null = null;
+    let startTime = 0;
+    
+    // 初始化Tone.js
+    async function initTone() {
+        await Tone.start();
+        console.log("音频已初始化，可以播放");
+        
+        // 创建Player
+        audioPlayer = new Tone.Player({
+            url: audioSrc,
+            loop: false,
+            onload: () => {
+                if (audioPlayer && audioPlayer.loaded) {
+                    // 设置最后一个字幕的结束时间
+                    if (subtitles.length > 0) {
+                        subtitles[subtitles.length - 1].end = audioPlayer.buffer.duration;
+                    }
+                }
+            },
+            onstop: () => {
+                // 清除高亮并重新开始
+                currentTime = 0;
+                audioPlaying = false;
+                cancelAnimationFrame(animationId);
+                drawWaveform(currentTime);
+            },
+            onended: () => {
+                // 清除高亮并重新开始
+                currentTime = 0;
+                audioPlaying = false;
+                cancelAnimationFrame(animationId);
+                drawWaveform(currentTime);
+            }
+        }).toDestination();
+    }
 
     // --- Subtitle Parsing Functions ---
 
@@ -72,6 +106,9 @@
         const lines: { start: number, end: number, text: string }[] = [];
         splitByTimestamps(content).forEach(({ start, text }) => {
             lines.push({ start, end: Infinity, text });
+            // 打印line当前行内容
+            console.log('line:', { start, end: Infinity, text });
+
         });
 
         // Sort by start time
@@ -197,9 +234,10 @@
 
     // 更新歌词高亮
     function updateHighlight() {
-        if (!audioPlaying) return;
+        if (!audioPlaying || !audioPlayer) return;
         
-        currentTime = audioHowl.seek() || 0;
+        // 获取当前播放时间
+        currentTime = audioPlayer.immediate();
         
         // 绘制波形
         drawWaveform(currentTime);
@@ -209,6 +247,8 @@
     
     // 绘制波形
     function drawWaveform(currentTime: number) {
+        if (!audioPlayer || !audioPlayer.loaded) return;
+        
         const ctx = waveformCanvas.getContext('2d');
         if (!ctx) return;
         
@@ -216,59 +256,52 @@
         const height = waveformCanvas.height;
         
         ctx.clearRect(0, 0, width, height);
-        
-        // 绘制背景
         ctx.fillStyle = '#f5f5f5';
         ctx.fillRect(0, 0, width, height);
         
-        const duration = audioHowl.duration() || 1;
+        const duration = audioPlayer.buffer.duration;
         const progress = (currentTime / duration) * width;
         
-        // 波形依赖于歌词的时间点
+        // 绘制基于字幕的波形
         ctx.beginPath();
-        ctx.moveTo(0, height / 2);
+        ctx.moveTo(0, height/2);
         
-        const timeOffset = (Date.now() - (startTime || 0)) / 1000;
+        const timeOffset = Tone.Transport.seconds;
         
         // 绘制波形
         for (let x = 0; x < width; x++) {
             const xRatio = x / width * duration;
             let y = height / 2;
             
-            // 在歌词时间点附近创造波动
+            // 字幕位置附近创造波动
             for (const line of subtitles) {
                 const startPos = (line.start / duration) * width;
                 const endPos = (line.end / duration) * width;
                 
                 if (x >= startPos && x <= endPos) {
-                    // 当前歌词行活跃时波形振幅较大
                     const lineProgress = (x - startPos) / (endPos - startPos);
                     y += Math.sin(lineProgress * Math.PI * 2 + timeOffset * 3) * 10;
                 } else if (Math.abs(x - startPos) < 20) {
-                    // 歌词开始附近有波峰
                     const impact = (20 - Math.abs(x - startPos)) / 20;
                     y += Math.sin(impact * Math.PI + timeOffset) * 15 * impact;
                 }
             }
             
-            // 添加随时间变化的小波动
             y += Math.sin(x * 0.1 + timeOffset) * 3;
-            
             ctx.lineTo(x, y);
         }
         
-        // 绘制波形线
         ctx.strokeStyle = '#4a9eff';
         ctx.lineWidth = 2;
         ctx.stroke();
         
-        // 绘制已播放部分
+        // 绘制进度条
         ctx.beginPath();
         ctx.rect(0, 0, progress, height);
         ctx.fillStyle = 'rgba(30, 107, 199, 0.2)';
         ctx.fill();
         
-        // 绘制播放位置线
+        // 绘制进度线
         ctx.beginPath();
         ctx.moveTo(progress, 0);
         ctx.lineTo(progress, height);
@@ -277,15 +310,19 @@
         ctx.stroke();
     }
 
-    // 切换音频播放
-    function togglePlayback() {
+    // 播放/停止音频
+    async function togglePlayback() {
+        if (!audioPlayer) {
+            await initTone();
+        }
+        
         if (!audioPlaying) {
-            startTime = Date.now();
-            audioHowl.play();
+            startTime = Tone.now();
+            audioPlayer.start();
             audioPlaying = true;
             updateHighlight();
         } else {
-            audioHowl.stop();
+            audioPlayer.stop();
             audioPlaying = false;
             if (animationId) {
                 cancelAnimationFrame(animationId);
@@ -293,28 +330,14 @@
         }
     }
 
-    // Lifecycle: Setup audio and parse subtitles on component mount.
-    onMount(() => {
+    onMount(async () => {
         subtitles = parseSubtitles(subtitleContent, subtitleFormat);
-
-        // 创建Howl实例
-        audioHowl = new Howl({
-            src: [audioSrc],
-            loop: true,
-            html5: true,
-            onload: function() {
-                // 设置最后一句歌词的结束时间为音频的总时长
-                if (subtitles.length > 0) {
-                    subtitles[subtitles.length - 1].end = audioHowl.duration();
-                }
-            }
-        });
+        await initTone();
     });
 
     onDestroy(() => {
-        if (audioHowl) {
-            audioHowl.stop();
-            audioHowl.unload();
+        if (audioPlayer) {
+            audioPlayer.stop().dispose();
         }
         if (animationId) {
             cancelAnimationFrame(animationId);
@@ -325,12 +348,10 @@
 <div class="lyrics-container">
     <canvas bind:this={waveformCanvas} class="waveform" width="800" height="50"></canvas>
     {#each subtitles as line (line.start)}
-        <div class="line { (currentTime>0) && currentTime >= line.start && currentTime < line.end ? 'active' : ''}">
+        <div class="line {currentTime >= line.start && currentTime < line.end ? 'active' : ''}">
             {#each line.text.split('') as char, i}
                 <span
-                    class={currentTime > 0 && (currentTime >= line.start + (i / line.text.length) * (line.end - line.start))
-                        ? 'highlight'
-                        : ''}
+                    class={currentTime >= line.start + (i / line.text.length) * (line.end - line.start) ? 'highlight' : ''}
                 >
                     {char}
                 </span>

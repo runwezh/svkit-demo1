@@ -1,9 +1,9 @@
 <script lang="ts">
     import { onMount, onDestroy } from 'svelte';
-    import { Howl } from 'howler';
+    import * as Tone from 'tone';
     import * as d3 from 'd3';
 
-    let audioHowl: Howl;
+    let audioPlayer: Tone.Player;
     let svg: SVGElement;
     let waveformCanvas: HTMLCanvasElement;
     const width = 800;
@@ -13,14 +13,35 @@
     let musicPlaying = false;
     let previousTime = 0;
     let duration = 10;
-    let startTime: number | null = null;
 
-    const drumBeats = [2.4,3.0,3.6,4.2,4.8,5.4,6.0,6.6,7.2,7.8,8.4,9.0,9.6,10.2,10.8,11.4,12.0,12.6,13.2,13.8,14.4,15.0,15.6,16.2];
+    const drumBeats = [2.4, 3.0, 3.6, 4.2, 4.8, 5.4, 6.0, 6.6, 7.2, 7.8, 8.4, 9.0, 9.6, 10.2, 10.8, 11.4, 12.0, 12.6, 13.2, 13.8, 14.4, 15.0, 15.6, 16.2];
 
     let xScale = d3
         .scaleLinear()
         .domain([0, duration])
         .range([50, width - 50]);
+
+    // 初始化Tone.js
+    async function initTone() {
+        await Tone.start();
+        console.log("音频已初始化，可以播放");
+        
+        // 创建播放器并设置循环
+        audioPlayer = new Tone.Player({
+            url: "./audio/intro/normal.mp3",
+            loop: true,
+            onload: () => {
+                if (audioPlayer && audioPlayer.loaded) {
+                    duration = audioPlayer.buffer.duration;
+                    xScale.domain([0, duration]);
+                    drumBeats.forEach((beat, index) => {
+                        d3.select(`#beat-${index}`).attr('cx', xScale(beat));
+                    });
+                    console.log("音频加载完成，时长：", duration);
+                }
+            }
+        }).toDestination();
+    }
 
     function setupSvg() {
         const svgContainer = d3.select(svg).attr('width', width).attr('height', height);
@@ -49,12 +70,12 @@
     }
 
     function update() {
-        if (!musicPlaying) return;
+        if (!musicPlaying || !audioPlayer) return;
         
-        // 获取当前播放位置
-        const currentTime = audioHowl.seek() || 0;
-
-        // 更新鼓点动画
+        // 获取当前播放时间
+        const currentTime = audioPlayer.immediate();
+        
+        // 检查鼓点
         drumBeats.forEach((beat, index) => {
             if (previousTime < beat && currentTime >= beat) {
                 d3.select(`#beat-${index}`)
@@ -66,16 +87,18 @@
                     .attr('r', 8);
             }
         });
-
+        
         // 绘制波形
         drawWaveform(currentTime);
-
+        
         previousTime = currentTime;
         animationId = requestAnimationFrame(update);
     }
 
-    // 绘制音频波形
-    function drawWaveform(seek: number) {
+    // 绘制波形显示
+    function drawWaveform(currentTime: number) {
+        if (!audioPlayer || !audioPlayer.loaded) return;
+        
         const ctx = waveformCanvas.getContext('2d');
         if (!ctx) return;
         
@@ -83,26 +106,24 @@
         const height = waveformCanvas.height;
         
         ctx.clearRect(0, 0, width, height);
-        
-        // 绘制波形背景
         ctx.fillStyle = '#f5f5f5';
         ctx.fillRect(0, 0, width, height);
         
-        // 计算进度位置
-        const progress = (seek / duration) * width;
+        // 计算进度
+        const progress = (currentTime / duration) * width;
         
-        // 绘制波形线
+        // 绘制波形
         ctx.beginPath();
-        ctx.moveTo(0, height / 2);
+        ctx.moveTo(0, height/2);
         
-        const timeOffset = (Date.now() - (startTime || 0)) / 1000;
+        const timeOffset = Tone.Transport.seconds;
         
-        // 绘制简单波形
+        // 绘制随鼓点变化的波形
         for (let x = 0; x < width; x++) {
             const xRatio = x / width;
             let y = height / 2;
             
-            // 在鼓点位置创建波峰
+            // 鼓点位置创建波峰
             for (const beat of drumBeats) {
                 const beatPos = (beat / duration) * width;
                 const distance = Math.abs(x - beatPos);
@@ -112,23 +133,22 @@
                 }
             }
             
-            // 添加随时间变化的小波动
+            // 添加小波动
             y += Math.sin(x * 0.1 + timeOffset) * 2;
             
             ctx.lineTo(x, y);
         }
         
-        ctx.lineTo(width, height / 2);
         ctx.strokeStyle = '#4a9eff';
         ctx.stroke();
         
-        // 绘制已播放部分
+        // 绘制进度遮罩
         ctx.beginPath();
         ctx.rect(0, 0, progress, height);
         ctx.fillStyle = 'rgba(30, 107, 199, 0.2)';
         ctx.fill();
         
-        // 绘制播放位置线
+        // 绘制进度线
         ctx.beginPath();
         ctx.moveTo(progress, 0);
         ctx.lineTo(progress, height);
@@ -137,42 +157,31 @@
         ctx.stroke();
     }
 
-    function toggleMusic() {
+    async function toggleMusic() {
+        if (!audioPlayer) {
+            await initTone();
+        }
+        
         if (!musicPlaying) {
-            startTime = Date.now();
-            audioHowl.play();
+            audioPlayer.start();
             musicPlaying = true;
             update();
         } else {
-            audioHowl.stop();
+            audioPlayer.stop();
             musicPlaying = false;
             previousTime = 0;
             cancelAnimationFrame(animationId);
         }
     }
 
-    onMount(() => {
+    onMount(async () => {
         setupSvg();
-
-        // 创建音频
-        audioHowl = new Howl({
-            src: ['./audio/intro/normal.mp3'],
-            loop: true,
-            html5: true,
-            onload: function() {
-                duration = audioHowl.duration();
-                xScale.domain([0, duration]);
-                drumBeats.forEach((beat, index) => {
-                    d3.select(`#beat-${index}`).attr('cx', xScale(beat));
-                });
-            }
-        });
+        await initTone();
     });
 
     onDestroy(() => {
-        if (audioHowl) {
-            audioHowl.stop();
-            audioHowl.unload();
+        if (audioPlayer) {
+            audioPlayer.stop().dispose();
         }
         if (animationId) {
             cancelAnimationFrame(animationId);

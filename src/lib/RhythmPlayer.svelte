@@ -13,7 +13,7 @@
     let previousTime = 0;
     let duration = 10;
 
-    const drumBeats = [1, 2.5, 4, 5.5, 7, 8.5];
+    const drumBeats = [2.4,3.0,3.6,4.2,4.8,5.4,6.0,6.6,7.2,7.8,8.4,9.0,9.6,10.2,10.8,11.4,12.0,12.6,13.2,13.8,14.4,15.0,15.6,16.2];
 
     let xScale = d3
         .scaleLinear()

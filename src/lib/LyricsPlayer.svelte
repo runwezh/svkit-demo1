@@ -205,6 +205,7 @@
         } else {
             wavesurfer.pause();
             wavesurfer.seekTo(0);
+            wavesurfer.stop();
             audioPlaying = false;
         }
     }

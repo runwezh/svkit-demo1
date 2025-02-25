@@ -1,14 +1,15 @@
 <script lang="ts">
     import { onMount, onDestroy } from 'svelte';
+    import WaveSurfer from 'wavesurfer.js';
     import * as d3 from 'd3';
 
+    let wavesurfer: WaveSurfer;
     let svg: SVGElement;
     const width = 800;
     const height = 200;
     let animationId: number;
 
     let musicPlaying = false;
-    let audioElement: HTMLAudioElement;
     let previousTime = 0;
     let duration = 10;
 
@@ -47,9 +48,8 @@
 
     function update() {
         if (!musicPlaying) return;
-        const currentTime = audioElement.currentTime; // 使用原生currentTime属性
+        const currentTime = wavesurfer.getCurrentTime();
 
-        // 检查鼓点
         drumBeats.forEach((beat, index) => {
             if (previousTime < beat && currentTime >= beat) {
                 d3.select(`#beat-${index}`)
@@ -62,23 +62,18 @@
             }
         });
 
-        if (currentTime < previousTime) {
-            previousTime = 0;
-        } else {
-            previousTime = currentTime;
-        }
+        previousTime = currentTime;
         animationId = requestAnimationFrame(update);
     }
 
     function toggleMusic() {
         if (!musicPlaying) {
-            audioElement.play();
+            wavesurfer.play();
             musicPlaying = true;
-            previousTime = 0;
             update();
         } else {
-            audioElement.pause();
-            audioElement.currentTime = 0;
+            wavesurfer.pause();
+            wavesurfer.seekTo(0);
             musicPlaying = false;
             cancelAnimationFrame(animationId);
         }
@@ -87,33 +82,39 @@
     onMount(() => {
         setupSvg();
 
-        // 初始化音频元素
-        audioElement = new Audio('/audio/intro/normal.mp3');
-        audioElement.loop = true;
+        wavesurfer = WaveSurfer.create({
+            container: '#waveform',
+            waveColor: '#4a9eff',
+            progressColor: '#1e6bc7',
+            height: 50,
+            cursorWidth: 1,
+            cursorColor: '#333',
+            normalize: true,
+            // loop: true, // 移除，通过事件处理循环播放
+        } as any);
+        
+        wavesurfer.on('finish', () => {
+            if (musicPlaying) {
+                wavesurfer.play();
+            }
+        });
 
-        // 音频加载完成后更新duration和位置
-        audioElement.addEventListener('loadedmetadata', () => {
-            duration = audioElement.duration;
+        wavesurfer.load('./audio/intro/normal.mp3');
+        
+        wavesurfer.on('ready', () => {
+            duration = wavesurfer.getDuration();
             xScale.domain([0, duration]);
             drumBeats.forEach((beat, index) => {
                 d3.select(`#beat-${index}`).attr('cx', xScale(beat));
             });
         });
-
-        // 音频播放开始时开始更新
-        audioElement.addEventListener('play', updatePlayback);
     });
 
-    function updatePlayback() {
-        if (!musicPlaying) return;
-        console.log(`Current playback time: ${audioElement.currentTime} seconds`);
-        animationId = requestAnimationFrame(updatePlayback);
-    }
-
     onDestroy(() => {
-        if (musicPlaying) {
-            audioElement.pause();
-            audioElement.src = '';
+        if (wavesurfer) {
+            wavesurfer.destroy();
+        }
+        if (animationId) {
             cancelAnimationFrame(animationId);
         }
     });
@@ -121,6 +122,7 @@
 
 <div class="container">
     <h1>RhythmPlayer 音乐鼓点可视化</h1>
+    <div id="waveform"></div>
     <svg bind:this={svg}></svg>
     <div>
         <button on:click={toggleMusic}>

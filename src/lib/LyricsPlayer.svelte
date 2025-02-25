@@ -1,15 +1,15 @@
 <script lang="ts">
     import { onMount, onDestroy } from 'svelte';
+    import WaveSurfer from 'wavesurfer.js';
     
-    export let audioSrc = '/audio/leaving_the_club_edited.mp3';
+    export let audioSrc = './audio/leaving_the_club_edited.mp3';
     export let subtitleContent ='[00:00.00]As I\'m leaving the club, I\'m here in the vibration of the kick drum.[00:04.00]It was the most life - changing moment I ever had...[00:07.20]Like, did I hear that?[00:08.64]It sounded like the kick drum was played by a drunk three - year - old.[00:13.00]And I was like, are you allowed to do that?'; // the raw subtitle text
     export let subtitleFormat = 'lrc'; // default format
 
-    let subtitles: { start: number, end: number, text: string }[] = [];
+    let wavesurfer: WaveSurfer;
     let currentTime = 0;
     let audioPlaying = false;
-    let animationId: number;
-    let audioPlayer: HTMLAudioElement;
+    let subtitles: { start: number, end: number, text: string }[] = [];
 
     // --- Subtitle Parsing Functions ---
 
@@ -76,8 +76,6 @@
         // Define end times: next line's start, or Infinity (will be adjusted later)
         for (let i = 0; i < lines.length; i++) {
             lines[i].end = i < lines.length - 1 ? lines[i + 1].start : Infinity;
-            // 打印出来看看
-            console.log(lines[i].start, lines[i].end, lines[i].text);
         }
         return lines;
     }
@@ -196,27 +194,18 @@
 
     // Update current subtitle highlighting based on playback time.
     function updateHighlight() {
-        if (!audioPlaying) return;
-        currentTime = audioPlayer.currentTime || 0;
-        animationId = requestAnimationFrame(updateHighlight);
+        currentTime = wavesurfer.getCurrentTime();
     }
 
     // Toggle audio playback.
     function togglePlayback() {
         if (!audioPlaying) {
-            audioPlayer.play();
+            wavesurfer.play();
             audioPlaying = true;
-            if (subtitles[subtitles.length - 1].end === Infinity) {
-                subtitles[subtitles.length - 1].end = audioPlayer.duration || Infinity;
-            }
-            updateHighlight();
         } else {
-            audioPlayer.pause();
-            audioPlayer.currentTime = 0;
+            wavesurfer.pause();
+            wavesurfer.seekTo(0);
             audioPlaying = false;
-            if (typeof cancelAnimationFrame === 'function') {
-                cancelAnimationFrame(animationId);
-            }
         }
     }
 
@@ -224,32 +213,45 @@
     onMount(() => {
         subtitles = parseSubtitles(subtitleContent, subtitleFormat);
 
-        // 创建Audio实例并设置循环播放
-        audioPlayer = new Audio(audioSrc);
-        audioPlayer.loop = true;
+        wavesurfer = WaveSurfer.create({
+            container: '#waveform',
+            waveColor: '#4a9eff',
+            progressColor: '#1e6bc7',
+            height: 50,
+            cursorWidth: 1,
+            cursorColor: '#333',
+            normalize: true,
+        } as any); // 添加类型断言
 
-        startAnimation();
+        // 添加音频结束事件监听器，实现循环播放
+        wavesurfer.on('finish', () => {
+            if (audioPlaying) {
+                wavesurfer.play();
+            }
+        });
+
+        wavesurfer.on('ready', () => {
+            // 设置最后一句歌词的结束时间为音频的总时长
+            if (subtitles.length > 0) {
+                subtitles[subtitles.length - 1].end = wavesurfer.getDuration();
+            }
+        });
+
+        wavesurfer.load(audioSrc);
+        
+        wavesurfer.on('audioprocess', updateHighlight);
+        wavesurfer.on('seek', updateHighlight);
     });
 
     onDestroy(() => {
-        if (audioPlayer) {
-            audioPlayer.pause();
-            audioPlayer.src = '';
-        }
-        if (typeof cancelAnimationFrame === 'function') {
-            cancelAnimationFrame(animationId);
+        if (wavesurfer) {
+            wavesurfer.destroy();
         }
     });
-
-    let animationFrameId: number;
-
-    function startAnimation() {
-        // 动画逻辑
-        animationFrameId = requestAnimationFrame(startAnimation);
-    }
 </script>
 
 <div class="lyrics-container">
+    <div id="waveform"></div>
     {#each subtitles as line (line.start)}
         <div class="line { (currentTime>0) && currentTime >= line.start && currentTime < line.end ? 'active' : ''}">
             {#each line.text.split('') as char, i}
